@@ -1,0 +1,134 @@
+# 编译输出
+/libs/
+/obj/
+/build/
+
+# CMake生成的文件
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+build.ninja
+.ninja_deps
+.ninja_log
+
+# NDK build files
+*.so
+*.a
+*.o
+*.d
+
+# IDE文件
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Clangd cache
+.cache/
+.clangd
+
+# Visual Studio files
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.suo
+*.user
+*.aps
+*.pch
+*.vspscc
+*_i.c
+*_p.c
+*.ncb
+*.tlb
+*.tlh
+*.bak
+*.cache
+*.ilk
+*.lib
+*.sbr
+*.sdf
+*.opensdf
+*.unsuccessfulbuild
+ipch/
+*.idb
+*.pgc
+*.pgd
+*.rsp
+*.tmp
+*.tmp_proj
+*.vspscc
+*.vssscc
+.builds
+*.pidb
+*.svclog
+*.scc
+
+# Android Studio files
+.gradle/
+local.properties
+.DS_Store
+/captures
+.externalNativeBuild
+.cxx/
+
+# 临时文件
+*.class
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 备份文件
+*.bak
+*.backup
+*.old
+
+# 测试输出
+test_output/
+
+# 包文件
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# 环境文件
+.env
+.env.local
+.env.*.local
+
+# 生成的JNI头文件
+*.h.gch
+
+# 性能分析数据
+*.prof
+*.gprof
+
+# 覆盖率报告
+*.gcov
+*.gcda
+*.gcno
+coverage/
+
+# 静态分析
+.sonar/
+.scannerwork/
+
+# 本地配置
+config.local
+*.local.conf
