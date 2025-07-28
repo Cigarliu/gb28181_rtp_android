@@ -191,7 +191,7 @@ bool NatsClient::publishBinary(const std::string& subject, const uint8_t* data, 
         return false;
     }
     
-    LOGI("Published binary data (%zu bytes) to subject '%s'", dataLen, subject.c_str());
+   // LOGI("Published binary data (%zu bytes) to subject '%s'", dataLen, subject.c_str());
     return true;
 }
 

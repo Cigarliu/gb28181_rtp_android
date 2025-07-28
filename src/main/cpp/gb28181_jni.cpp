@@ -103,6 +103,7 @@ Java_com_example_gb28181jni_GB28181_inputData(JNIEnv *env, jobject /* this */,
     
     bool result = false;
     
+    /*
     // 如果是视频流类型且设置了保存目录，则保存到文件
     if (dataType == VIDEO_STREAM && !g_saveDirectory.empty()) {
         // 根据数据类型生成不同的文件名和扩展名
@@ -122,10 +123,10 @@ Java_com_example_gb28181jni_GB28181_inputData(JNIEnv *env, jobject /* this */,
             LOGE("Failed to open file for writing: %s", filename);
         }
     }
-    
+    */
     // 无论是否保存文件，都发布到NATS
     bool publishResult = g_natsClient->publishBinary(pubSubject, reinterpret_cast<const uint8_t*>(buffer), dataLen);
-    LOGI("Published data to NATS subject: %s, size: %d bytes", pubSubject.c_str(), dataLen);
+    //LOGI("Published data to NATS subject: %s, size: %d bytes", pubSubject.c_str(), dataLen);
     
     // 如果没有保存文件，则使用发布结果作为返回值
     if (!result) {
