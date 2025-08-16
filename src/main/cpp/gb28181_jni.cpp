@@ -9,6 +9,29 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <queue>
+#include <condition_variable>
+#include <atomic>
+#include <chrono>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <errno.h>
+#include <thread>
+#include <queue>
+#include <condition_variable>
+#include <atomic>
+#include <chrono>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <thread>
+#include <queue>
+#include <condition_variable>
+#include <atomic>
+#include <chrono>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 // 数据类型枚举（与Java层保持一致）
 enum DataType {
@@ -59,6 +82,66 @@ struct RtpInstance {
   }
 };
 
+// 异步文件保存相关结构
+struct SaveTask {
+  int streamIndex;                    // 流索引 (0-5)
+  std::vector<uint8_t> data;         // 数据副本
+  std::chrono::system_clock::time_point timestamp; // 时间戳
+
+  SaveTask(int idx, const uint8_t* dataPtr, size_t size)
+    : streamIndex(idx), data(dataPtr, dataPtr + size),
+      timestamp(std::chrono::system_clock::now()) {}
+};
+
+// 流文件管理器
+class StreamFileManager {
+private:
+  int streamIndex;
+  std::string baseDir;
+  std::string currentFilePath;
+  FILE* currentFile;
+  size_t currentFileSize;
+  std::chrono::steady_clock::time_point lastWriteTime;
+  std::mutex fileMutex;
+
+  static const size_t MAX_FILE_SIZE = 300 * 1024 * 1024; // 300MB
+  static const int MAX_IDLE_SECONDS = 10; // 10秒
+
+public:
+  StreamFileManager(int idx, const std::string& dir)
+    : streamIndex(idx), baseDir(dir), currentFile(nullptr), currentFileSize(0) {}
+
+  ~StreamFileManager() { closeCurrentFile(); }
+
+  bool writeData(const uint8_t* data, size_t size);
+  void checkAndCreateNewFile();
+  std::string generateFileName();
+  void closeCurrentFile();
+  bool createDirectory(const std::string& path);
+};
+
+// 异步文件保存器
+class AsyncFileSaver {
+private:
+  std::vector<std::unique_ptr<StreamFileManager>> fileManagers;
+  std::queue<SaveTask> saveQueue;
+  std::mutex queueMutex;
+  std::condition_variable queueCondition;
+  std::thread workerThread;
+  std::atomic<bool> running;
+  std::string baseDirectory;
+
+public:
+  AsyncFileSaver() : running(false) {}
+  ~AsyncFileSaver() { stop(); }
+
+  bool start(const std::string& baseDir);
+  void stop();
+  void enqueue(int streamIndex, const uint8_t* data, size_t size);
+  void workerLoop();
+  bool isRunning() const { return running.load(); }
+};
+
 // 导入NATS测试函数
 extern "C" {
 void testNatsConnection(const char *serverUrl);
@@ -84,6 +167,120 @@ static std::string g_saveDirectory = "";
 // RTP实例管理
 static RtpInstance g_rtpInstances[6]; // 支持6路流
 static std::mutex g_rtpMutex;         // 保护RTP实例的互斥锁
+
+// 异步文件保存器
+static std::unique_ptr<AsyncFileSaver> g_asyncFileSaver = nullptr;
+static bool g_saveEnabled = false;
+
+// StreamFileManager 实现
+bool StreamFileManager::createDirectory(const std::string& path) {
+  struct stat st = {0};
+  if (stat(path.c_str(), &st) == -1) {
+    // Android使用mkdir函数，需要包含sys/stat.h
+    int result = mkdir(path.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    if (result != 0) {
+      LOGE("Failed to create directory %s: %s", path.c_str(), strerror(errno));
+      return false;
+    }
+    return true;
+  }
+  return S_ISDIR(st.st_mode); // 确保是目录而不是文件
+}
+
+std::string StreamFileManager::generateFileName() {
+  auto now = std::chrono::system_clock::now();
+  auto time_t = std::chrono::system_clock::to_time_t(now);
+  auto tm = *std::localtime(&time_t);
+
+  // 创建流目录
+  std::string streamDir = baseDir + "/" + std::to_string(streamIndex + 1);
+  createDirectory(baseDir);
+  createDirectory(streamDir);
+
+  char filename[256];
+  snprintf(filename, sizeof(filename), "%s/%04d%02d%02d_%02d%02d%02d.bin",
+           streamDir.c_str(),
+           tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+           tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+  return std::string(filename);
+}
+
+void StreamFileManager::closeCurrentFile() {
+  if (currentFile) {
+    fclose(currentFile);
+    currentFile = nullptr;
+    currentFileSize = 0;
+    LOGI("Stream %d: Closed file: %s", streamIndex + 1, currentFilePath.c_str());
+  }
+}
+
+void StreamFileManager::checkAndCreateNewFile() {
+  auto now = std::chrono::steady_clock::now();
+  bool needNewFile = false;
+
+  // 检查文件大小
+  if (currentFileSize >= MAX_FILE_SIZE) {
+    LOGI("Stream %d: File size limit reached (%zu bytes), creating new file",
+         streamIndex + 1, currentFileSize);
+    needNewFile = true;
+  }
+
+  // 检查写入间隔
+  if (currentFile &&
+      std::chrono::duration_cast<std::chrono::seconds>(now - lastWriteTime).count() > MAX_IDLE_SECONDS) {
+    LOGI("Stream %d: Idle timeout reached (%d seconds), creating new file",
+         streamIndex + 1, MAX_IDLE_SECONDS);
+    needNewFile = true;
+  }
+
+  // 如果没有当前文件，也需要创建
+  if (!currentFile) {
+    needNewFile = true;
+  }
+
+  if (needNewFile) {
+    closeCurrentFile();
+
+    // 生成新文件路径
+    currentFilePath = generateFileName();
+
+    // 打开新文件
+    currentFile = fopen(currentFilePath.c_str(), "wb");
+    if (currentFile) {
+      currentFileSize = 0;
+      lastWriteTime = now;
+      LOGI("Stream %d: Created new file: %s", streamIndex + 1, currentFilePath.c_str());
+    } else {
+      LOGE("Stream %d: Failed to create file: %s", streamIndex + 1, currentFilePath.c_str());
+    }
+  }
+}
+
+bool StreamFileManager::writeData(const uint8_t* data, size_t size) {
+  std::lock_guard<std::mutex> lock(fileMutex);
+
+  // 检查是否需要创建新文件
+  checkAndCreateNewFile();
+
+  if (!currentFile) {
+    LOGE("Stream %d: No current file available for writing", streamIndex + 1);
+    return false;
+  }
+
+  // 直接写入二进制数据
+  size_t written = fwrite(data, 1, size, currentFile);
+  if (written == size) {
+    currentFileSize += size;
+    lastWriteTime = std::chrono::steady_clock::now();
+    fflush(currentFile); // 立即刷新到磁盘
+    return true;
+  } else {
+    LOGE("Stream %d: Failed to write data, expected %zu bytes, wrote %zu bytes",
+         streamIndex + 1, size, written);
+    return false;
+  }
+}
 
 // 辅助函数：获取流索引（从DataType转换为数组索引）
 static int getStreamIndex(int dataType) {
@@ -167,6 +364,104 @@ static bool initOrUpdateRtpInstance(int streamIndex,
   }
 }
 
+// AsyncFileSaver 实现
+bool AsyncFileSaver::start(const std::string& baseDir) {
+  if (running.load()) {
+    LOGW("AsyncFileSaver already running");
+    return true;
+  }
+
+  baseDirectory = baseDir;
+
+  // 创建6个流的文件管理器
+  fileManagers.clear();
+  for (int i = 0; i < 6; i++) {
+    fileManagers.push_back(std::unique_ptr<StreamFileManager>(new StreamFileManager(i, baseDirectory)));
+  }
+
+  // 启动工作线程
+  running.store(true);
+  workerThread = std::thread(&AsyncFileSaver::workerLoop, this);
+
+  LOGI("AsyncFileSaver started with base directory: %s", baseDirectory.c_str());
+  return true;
+}
+
+void AsyncFileSaver::stop() {
+  if (!running.load()) {
+    return;
+  }
+
+  // 停止工作线程
+  running.store(false);
+  queueCondition.notify_all();
+
+  if (workerThread.joinable()) {
+    workerThread.join();
+  }
+
+  // 清理文件管理器
+  fileManagers.clear();
+
+  // 清空队列
+  {
+    std::lock_guard<std::mutex> lock(queueMutex);
+    while (!saveQueue.empty()) {
+      saveQueue.pop();
+    }
+  }
+
+  LOGI("AsyncFileSaver stopped");
+}
+
+void AsyncFileSaver::enqueue(int streamIndex, const uint8_t* data, size_t size) {
+  if (!running.load() || streamIndex < 0 || streamIndex >= 6) {
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(queueMutex);
+    saveQueue.emplace(streamIndex, data, size);
+  }
+
+  queueCondition.notify_one();
+}
+
+void AsyncFileSaver::workerLoop() {
+  LOGI("AsyncFileSaver worker thread started");
+
+  while (running.load()) {
+    std::unique_lock<std::mutex> lock(queueMutex);
+
+    // 等待任务或停止信号
+    queueCondition.wait(lock, [this] {
+      return !saveQueue.empty() || !running.load();
+    });
+
+    // 处理队列中的所有任务
+    while (!saveQueue.empty() && running.load()) {
+      SaveTask task = std::move(saveQueue.front());
+      saveQueue.pop();
+      lock.unlock();
+
+      // 执行文件写入
+      if (task.streamIndex >= 0 && task.streamIndex < 6) {
+        bool success = fileManagers[task.streamIndex]->writeData(
+          task.data.data(), task.data.size());
+
+        if (!success) {
+          LOGE("Stream %d: Failed to save %zu bytes to file",
+               task.streamIndex + 1, task.data.size());
+        }
+      }
+
+      lock.lock();
+    }
+  }
+
+  LOGI("AsyncFileSaver worker thread stopped");
+}
+
 // 辅助函数：处理视频流数据
 static bool processVideoStream(int streamIndex, const uint8_t *data,
                                size_t dataLen) {
@@ -232,27 +527,41 @@ extern "C" {
 // 示例JNI方法 - 返回一个简单的字符串
 JNIEXPORT jstring JNICALL Java_com_example_gb28181jni_GB28181_stringFromJNI(
     JNIEnv *env, jobject /* this */) {
-  std::string hello = "test version 2025.7.30 增加了拆包再分包的逻辑";
+  std::string hello = "test version 2025.8.17 增加了文件保存功能";
   return env->NewStringUTF(hello.c_str());
 }
 
 // 初始化GB28181相关功能并连接NATS服务器
 JNIEXPORT jboolean JNICALL Java_com_example_gb28181jni_GB28181_initGB28181(
     JNIEnv *env, jobject /* this */, jstring saveDirectory) {
-  return JNI_TRUE;
   LOGI("Initializing GB28181");
 
   // 使用写死的NATS服务器地址
   g_natsServer = "nats://cctv.mba:4222";
 
-  // 如果提供了保存目录，则更新全局变量
+  // 如果提供了保存目录，则更新全局变量并启动异步文件保存器
   if (saveDirectory != nullptr) {
     const char *dirPath = env->GetStringUTFChars(saveDirectory, 0);
     g_saveDirectory = dirPath;
     LOGI("Set save directory: %s", g_saveDirectory.c_str());
+
+    // 启动异步文件保存器
+    if (!g_asyncFileSaver) {
+      g_asyncFileSaver = std::unique_ptr<AsyncFileSaver>(new AsyncFileSaver());
+    }
+
+    if (g_asyncFileSaver->start(g_saveDirectory)) {
+      g_saveEnabled = true;
+      LOGI("Async file saver started successfully");
+    } else {
+      LOGE("Failed to start async file saver");
+      g_saveEnabled = false;
+    }
+
     env->ReleaseStringUTFChars(saveDirectory, dirPath);
   } else {
     g_saveDirectory = ""; // 如果为null则不保存文件
+    g_saveEnabled = false;
     LOGI("No save directory specified, files will not be saved");
   }
 
@@ -328,6 +637,13 @@ JNIEXPORT jboolean JNICALL Java_com_example_gb28181jni_GB28181_inputData(
     if (result) {
       // LOGI("Stream %d: Video data processed successfully, pushed to RTP
       // pipeline", streamIndex + 1);
+
+      // 异步保存原始数据
+      if (g_saveEnabled && g_asyncFileSaver && g_asyncFileSaver->isRunning()) {
+        g_asyncFileSaver->enqueue(streamIndex,
+                                 reinterpret_cast<const uint8_t *>(buffer),
+                                 dataLen);
+      }
     } else {
       LOGE("Stream %d: Failed to process video data", streamIndex + 1);
     }
@@ -344,24 +660,6 @@ JNIEXPORT jboolean JNICALL Java_com_example_gb28181jni_GB28181_inputData(
     //     streamIndex + 1);
     // }
 
-    // 可选：保存到文件（调试用）
-    // if (!g_saveDirectory.empty() && result) {
-    //     char filename[256];
-    //     time_t now = time(0);
-    //     sprintf(filename, "%s/stream%d_video_%ld.h264",
-    //            g_saveDirectory.c_str(), streamIndex + 1, now);
-
-    //     FILE* file = fopen(filename, "ab");  // 追加模式
-    //     if (file) {
-    //         fwrite(buffer, 1, dataLen, file);
-    //         fclose(file);
-    //         LOGD("Stream %d: Data saved to file: %s", streamIndex + 1,
-    //         filename);
-    //     } else {
-    //         LOGW("Stream %d: Failed to save data to file: %s", streamIndex +
-    //         1, filename);
-    //     }
-    // }
   } else {
     LOGE("Unknown data type: %d", dataType);
   }
@@ -379,6 +677,14 @@ JNIEXPORT jboolean JNICALL Java_com_example_gb28181jni_GB28181_inputData(
 JNIEXPORT jboolean JNICALL Java_com_example_gb28181jni_GB28181_closeGB28181(
     JNIEnv *env, jobject /* this */) {
   LOGI("Closing GB28181 client connection");
+
+  // 停止异步文件保存器
+  if (g_asyncFileSaver) {
+    g_asyncFileSaver->stop();
+    g_asyncFileSaver.reset();
+    g_saveEnabled = false;
+    LOGI("Async file saver stopped");
+  }
 
   // 停止所有RTP实例
   {
