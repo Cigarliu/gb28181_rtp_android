@@ -27,40 +27,54 @@ if not exist "%NDK_PATH%\build\cmake\android.toolchain.cmake" (
     exit /b 1
 )
 
-REM Create and change to build directory
+REM Completely remove build directory
 if exist build (
     echo Removing existing build directory...
     rmdir /s /q build
+    timeout /t 2 /nobreak >nul
 )
+
+REM Create fresh build directory
 mkdir build
 cd build
 
-REM Force use of NDK's ninja if available, otherwise use Unix Makefiles
-set NINJA_PATH=%NDK_PATH%\prebuilt\windows-x86_64\bin\ninja.exe
-if exist "%NINJA_PATH%" (
-    echo Using NDK Ninja generator
-    set GENERATOR=-G "Ninja"
-    set CMAKE_MAKE_PROGRAM=-DCMAKE_MAKE_PROGRAM="%NINJA_PATH%"
-) else (
-    echo Using Unix Makefiles generator
-    set GENERATOR=-G "Unix Makefiles"
-    set CMAKE_MAKE_PROGRAM=
-)
+REM Set environment variables to force NDK usage
+set CC=%NDK_PATH%\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android21-clang.exe
+set CXX=%NDK_PATH%\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android21-clang++.exe
+set AR=%NDK_PATH%\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-ar.exe
+set STRIP=%NDK_PATH%\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-strip.exe
+
+echo Using compilers:
+echo CC: %CC%
+echo CXX: %CXX%
 
 REM Configure project with CMake for Android cross-compilation
 echo Configuring CMake for Android...
-cmake .. %GENERATOR% ^
+cmake .. ^
+    -G "Unix Makefiles" ^
     -DCMAKE_TOOLCHAIN_FILE="%NDK_PATH%\build\cmake\android.toolchain.cmake" ^
+    -DCMAKE_C_COMPILER="%CC%" ^
+    -DCMAKE_CXX_COMPILER="%CXX%" ^
+    -DCMAKE_AR="%AR%" ^
+    -DCMAKE_STRIP="%STRIP%" ^
     -DANDROID_ABI=%ABI% ^
     -DANDROID_PLATFORM=%ANDROID_PLATFORM% ^
     -DANDROID_NDK="%NDK_PATH%" ^
     -DCMAKE_BUILD_TYPE=Release ^
     -DANDROID_STL=c++_static ^
     -DANDROID_CPP_FEATURES="rtti exceptions" ^
-    %CMAKE_MAKE_PROGRAM%
+    -DCMAKE_MAKE_PROGRAM="%NDK_PATH%\prebuilt\windows-x86_64\bin\make.exe"
+
+REM Check configuration result
+if %ERRORLEVEL% NEQ 0 (
+    echo CMake configuration failed
+    pause
+    exit /b 1
+)
 
 REM Build project
-cmake --build . --config Release
+echo Building project with %NUMBER_OF_PROCESSORS% cores...
+cmake --build . --config Release -j %NUMBER_OF_PROCESSORS%
 
 REM Check compilation result
 if %ERRORLEVEL% EQU 0 (
