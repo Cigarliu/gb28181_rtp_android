@@ -172,7 +172,7 @@ bool NatsClient::publish(const std::string& subject, const std::string& message)
         return false;
     }
     
-    LOGI("Published message to subject '%s': %s", subject.c_str(), message.c_str());
+   // LOGI("Published message to subject '%s': %s", subject.c_str(), message.c_str());
     return true;
 }
 
@@ -206,7 +206,7 @@ bool NatsClient::subscribe(const std::string& subject, std::function<void(const 
         (natsConnection*)m_natsConn, subject, callback);
     
     if (result) {
-        LOGI("Subscribed to subject: %s", subject.c_str());
+        //LOGI("Subscribed to subject: %s", subject.c_str());
     } else {
         LOGE("Failed to subscribe to subject: %s", subject.c_str());
     }

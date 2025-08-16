@@ -65,7 +65,9 @@ include $(CLEAR_VARS)
 LOCAL_MODULE    := gb28181-lib
 LOCAL_SRC_FILES := ../src/main/cpp/gb28181_jni.cpp \
                    ../src/main/cpp/nats_client.cpp \
-                   ../src/main/cpp/nats_test.cpp
+                   ../src/main/cpp/nats_test.cpp \
+                   ../src/main/cpp/rtp/RtpSendPs.cpp \
+                   ../src/main/cpp/rtp/h264_streaming_framer.cpp
 
 LOCAL_LDLIBS    := -llog
 
@@ -75,7 +77,8 @@ LOCAL_C_INCLUDES := $(NDK_ROOT)/sources/cxx-stl/llvm-libc++/include \
                     $(NDK_ROOT)/toolchains/llvm/prebuilt/windows-x86_64/sysroot/usr/include/android \
                     ../3rd/nats.c-3.10.1/src \
                     ../3rd/nats.c-3.10.1/src/include \
-                    ../src/main/cpp
+                    ../src/main/cpp \
+                    ../src/main/cpp/rtp
 
 LOCAL_STATIC_LIBRARIES := nats_static
 

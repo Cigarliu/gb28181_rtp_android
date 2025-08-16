@@ -17,20 +17,20 @@ void testNatsConnection(const char* serverUrl) {
     
     // 连接到NATS服务器
     if (client.connect(serverUrl)) {
-        LOGI("NATS connection successful");
+       // LOGI("NATS connection successful");
         
         // 发布测试消息
         if (client.publish("test.subject", "Hello from GB28181 JNI")) {
-            LOGI("Test message published successfully");
+         //   LOGI("Test message published successfully");
         } else {
-            LOGE("Failed to publish test message");
+          //  LOGE("Failed to publish test message");
         }
         
         // 断开连接
         client.disconnect();
-        LOGI("NATS connection closed");
+        //LOGI("NATS connection closed");
     } else {
-        LOGE("Failed to connect to NATS server");
+        //LOGE("Failed to connect to NATS server");
     }
 }
 
